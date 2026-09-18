@@ -4,7 +4,7 @@
   const BUTTON_ID = 'codex-soraraw-save-folder';
   const ALL_BUTTON_ID = 'codex-soraraw-save-all';
   const LABEL_IDLE = 'Save To Folder';
-  const LABEL_ALL = 'Save All Chapters';
+  const LABEL_ALL = 'Download Chapters';
   const LABEL_BUSY = 'Preparing...';
   const API_IMAGE = 'https://api.mangarawgo.site';
   const IMAGE_LIST_KEY = '/fuCkYou!!!';

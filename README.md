@@ -27,7 +27,7 @@ MangaRaw pages use the existing canvas reconstruction workflow. Soraraw pages de
 ### All Chapters
 
 1. Open a manga directory/detail page.
-2. Click `Save All Chapters (N)`.
+2. Click `Download Chapters (N)`.
 3. Choose the chapters to download in the worker tab. All chapters are selected by default, and the list can be searched, selected, or cleared.
 4. Choose one destination folder.
 
