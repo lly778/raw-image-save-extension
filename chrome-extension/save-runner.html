@@ -9,8 +9,22 @@
     .card { max-width: 820px; margin: 0 auto; background: #171c1f; border: 1px solid #293439; border-radius: 16px; padding: 20px; box-shadow: 0 16px 40px rgba(0,0,0,.28); }
     h1 { margin: 0 0 12px; font-size: 20px; }
     .meta { color: #a8bdba; margin-bottom: 16px; }
-    .status { white-space: pre-wrap; word-break: break-word; background: #0d1113; border: 1px solid #233034; border-radius: 12px; padding: 14px; min-height: 180px; font-family: Consolas, "SFMono-Regular", monospace; }
-    .actions { margin-top: 14px; display: flex; gap: 10px; }
+    .chapter-selector { margin: 0 0 16px; padding: 14px 0; border-block: 1px solid #293439; }
+    .selector-head, .selector-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .selector-head { justify-content: space-between; margin-bottom: 10px; }
+    .selector-head h2 { margin: 0; font-size: 16px; }
+    .selected-count { color: #7dd3c7; font-weight: 700; }
+    .selector-tools { margin-bottom: 10px; }
+    .selector-tools input { min-width: 180px; flex: 1; border: 1px solid #3a4a50; border-radius: 6px; padding: 9px 10px; background: #0d1113; color: #e9f2f1; font: inherit; }
+    .selector-tools button { padding: 9px 12px; }
+    .chapter-list { max-height: 320px; overflow: auto; border: 1px solid #293439; border-radius: 6px; background: #0d1113; }
+    .chapter-option { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 12px; border-bottom: 1px solid #202a2e; cursor: pointer; }
+    .chapter-option:last-child { border-bottom: none; }
+    .chapter-option:hover { background: #172126; }
+    .chapter-option input { width: 16px; height: 16px; accent-color: #14b8a6; }
+    .chapter-option[hidden] { display: none; }
+    .status { white-space: pre-wrap; word-break: break-word; background: #0d1113; border: 1px solid #233034; border-radius: 8px; padding: 14px; min-height: 180px; font-family: Consolas, "SFMono-Regular", monospace; }
+    .actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
     button { border: none; border-radius: 999px; padding: 10px 16px; color: #fff; font: 700 14px/1 "Segoe UI", "Microsoft YaHei", sans-serif; cursor: pointer; background: linear-gradient(135deg,#0ea5a4,#0f766e); }
     button:disabled { opacity: .65; cursor: wait; }
     button.secondary { background: #39464b; }
@@ -20,6 +34,18 @@
   <div class="card">
     <h1>Save Worker</h1>
     <div class="meta" id="meta">Preparing job...</div>
+    <section class="chapter-selector" id="chapter-selector" hidden>
+      <div class="selector-head">
+        <h2>Choose Chapters</h2>
+        <span class="selected-count" id="selected-count"></span>
+      </div>
+      <div class="selector-tools">
+        <input id="chapter-search" type="search" placeholder="Search chapters" aria-label="Search chapters">
+        <button id="select-all" type="button" class="secondary">Select All</button>
+        <button id="clear-all" type="button" class="secondary">Clear All</button>
+      </div>
+      <div class="chapter-list" id="chapter-list"></div>
+    </section>
     <div class="status" id="status">Starting...</div>
     <div class="actions">
       <button id="pick" hidden>Choose Folder And Continue</button>

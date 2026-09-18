@@ -28,7 +28,8 @@ MangaRaw pages use the existing canvas reconstruction workflow. Soraraw pages de
 
 1. Open a manga directory/detail page.
 2. Click `Save All Chapters (N)`.
-3. Choose one destination folder in the worker tab.
+3. Choose the chapters to download in the worker tab. All chapters are selected by default, and the list can be searched, selected, or cleared.
+4. Choose one destination folder.
 
 All images are saved directly into that folder. Filenames use chapter sequence, chapter label, and page sequence, for example `0001 - Chapter 1 - 001.webp`, so normal filename sorting keeps the manga in reading order.
 

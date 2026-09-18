@@ -4,6 +4,12 @@ const statusEl = document.getElementById('status');
 const metaEl = document.getElementById('meta');
 const pickButton = document.getElementById('pick');
 const cancelButton = document.getElementById('cancel');
+const chapterSelector = document.getElementById('chapter-selector');
+const chapterList = document.getElementById('chapter-list');
+const chapterSearch = document.getElementById('chapter-search');
+const selectedCount = document.getElementById('selected-count');
+const selectAllButton = document.getElementById('select-all');
+const clearAllButton = document.getElementById('clear-all');
 let pendingJob = null;
 let abortController = null;
 
@@ -19,12 +25,16 @@ async function main() {
   metaEl.textContent = `${job.title || job.manifest?.title || 'Raw Images'} · ${job.mode || 'save'} job`;
 
   appendStatus('Job loaded.');
+  if (job.mode === 'bulk') {
+    setupChapterSelector(job.chapters);
+    appendStatus('Choose the chapters to download, then choose a folder.');
+  }
   appendStatus('This step needs one direct click in this page before Chrome will allow choosing a folder.');
   appendStatus('Click "Choose Folder And Continue" below.');
 
   pickButton.hidden = false;
   pickButton.focus();
-  pickButton.addEventListener('click', () => tryStartSave(), { once: true });
+  pickButton.addEventListener('click', () => tryStartSave());
 }
 
 function appendStatus(text) {
@@ -32,10 +42,12 @@ function appendStatus(text) {
 }
 
 async function tryStartSave() {
-  if (!pendingJob) return;
+  if (!pendingJob || pickButton.disabled) return;
   pickButton.disabled = true;
 
   try {
+    const job = getSelectedJob(pendingJob.job);
+    setChapterSelectorDisabled(true);
     const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
     pickButton.hidden = true;
     cancelButton.hidden = false;
@@ -47,18 +59,93 @@ async function tryStartSave() {
       appendStatus('Cancel requested. Finishing the current file...');
     };
     appendStatus('Folder selected. Saving files...');
-    await runSaveJob(pendingJob.job, dirHandle, abortController.signal);
+    await runSaveJob(job, dirHandle, abortController.signal);
     cancelButton.hidden = true;
     appendStatus('Done. You can close this tab.');
     await chrome.storage.local.remove(pendingJob.jobId).catch(() => {});
     pendingJob = null;
   } catch (error) {
-    pickButton.disabled = false;
     pickButton.hidden = false;
     cancelButton.hidden = true;
+    setChapterSelectorDisabled(false);
+    if (chapterSelector.hidden) {
+      pickButton.disabled = false;
+    } else {
+      updateSelectedChapterCount();
+    }
     const message = error instanceof Error ? error.message : String(error);
     appendStatus(error?.name === 'AbortError' ? 'Canceled.' : `Save failed: ${message}`);
   }
+}
+
+function setupChapterSelector(chapters) {
+  const list = Array.isArray(chapters) ? chapters : [];
+  if (!list.length) throw new Error('No chapters were provided.');
+  chapterSelector.hidden = false;
+  const fragment = document.createDocumentFragment();
+  list.forEach((chapter, index) => {
+    const label = document.createElement('label');
+    label.className = 'chapter-option';
+    label.dataset.search = `${chapter.label || ''} ${chapter.url || ''}`.toLocaleLowerCase();
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = true;
+    checkbox.dataset.index = String(index);
+    checkbox.addEventListener('change', updateSelectedChapterCount);
+    const text = document.createElement('span');
+    text.textContent = chapter.label || `Chapter ${index + 1}`;
+    label.append(checkbox, text);
+    fragment.appendChild(label);
+  });
+  chapterList.replaceChildren(fragment);
+  chapterSearch.addEventListener('input', filterChapterList);
+  selectAllButton.addEventListener('click', () => setAllChaptersSelected(true));
+  clearAllButton.addEventListener('click', () => setAllChaptersSelected(false));
+  updateSelectedChapterCount();
+}
+
+function getChapterCheckboxes() {
+  return [...chapterList.querySelectorAll('input[type="checkbox"]')];
+}
+
+function updateSelectedChapterCount() {
+  const checkboxes = getChapterCheckboxes();
+  const count = checkboxes.filter((checkbox) => checkbox.checked).length;
+  selectedCount.textContent = `${count} / ${checkboxes.length} selected`;
+  pickButton.textContent = count ? `Choose Folder And Download ${count}` : 'Choose At Least One Chapter';
+  pickButton.disabled = count === 0;
+}
+
+function setAllChaptersSelected(checked) {
+  for (const checkbox of getChapterCheckboxes()) checkbox.checked = checked;
+  updateSelectedChapterCount();
+}
+
+function filterChapterList() {
+  const query = chapterSearch.value.trim().toLocaleLowerCase();
+  for (const option of chapterList.querySelectorAll('.chapter-option')) {
+    option.hidden = Boolean(query) && !option.dataset.search.includes(query);
+  }
+}
+
+function setChapterSelectorDisabled(disabled) {
+  if (chapterSelector.hidden) return;
+  chapterSearch.disabled = disabled;
+  selectAllButton.disabled = disabled;
+  clearAllButton.disabled = disabled;
+  for (const checkbox of getChapterCheckboxes()) checkbox.disabled = disabled;
+}
+
+function getSelectedJob(job) {
+  if (job.mode !== 'bulk') return job;
+  const chapters = getChapterCheckboxes()
+    .filter((checkbox) => checkbox.checked)
+    .map((checkbox) => {
+      const index = Number(checkbox.dataset.index);
+      return { ...job.chapters[index], sequence: index + 1 };
+    });
+  if (!chapters.length) throw new Error('Choose at least one chapter.');
+  return { ...job, chapters, totalChapterCount: job.chapters.length };
 }
 
 async function runSaveJob(job, dirHandle, signal) {
@@ -89,12 +176,13 @@ async function saveBulk(job, dirHandle, signal) {
   const chapters = Array.isArray(job.chapters) ? job.chapters : [];
   if (!chapters.length) throw new Error('No chapters were provided.');
   const failures = [];
-  const sequenceWidth = Math.max(4, String(chapters.length).length);
+  const sequenceWidth = Math.max(4, String(job.totalChapterCount || chapters.length).length);
 
   for (let index = 0; index < chapters.length; index += 1) {
     throwIfAborted(signal);
     const chapter = chapters[index];
-    const prefix = `${String(index + 1).padStart(sequenceWidth, '0')} - ${sanitizeFilenamePart(chapter.label || `Chapter ${index + 1}`)}`;
+    const sequence = Number(chapter.sequence || index + 1);
+    const prefix = `${String(sequence).padStart(sequenceWidth, '0')} - ${sanitizeFilenamePart(chapter.label || `Chapter ${sequence}`)}`;
     appendStatus(`Chapter ${index + 1}/${chapters.length}: ${chapter.label || chapter.url}`);
     try {
       if (job.site === 'soraraw') {
