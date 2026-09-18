@@ -12,6 +12,7 @@ const selectAllButton = document.getElementById('select-all');
 const clearAllButton = document.getElementById('clear-all');
 let pendingJob = null;
 let abortController = null;
+let lastChapterSelectionIndex = null;
 
 main().catch((error) => appendStatus(`Failed: ${error instanceof Error ? error.message : String(error)}`));
 
@@ -91,6 +92,7 @@ function setupChapterSelector(chapters) {
     checkbox.type = 'checkbox';
     checkbox.checked = true;
     checkbox.dataset.index = String(index);
+    checkbox.addEventListener('click', (event) => handleChapterCheckboxClick(event, index));
     checkbox.addEventListener('change', updateSelectedChapterCount);
     const text = document.createElement('span');
     text.textContent = chapter.label || `Chapter ${index + 1}`;
@@ -116,8 +118,23 @@ function updateSelectedChapterCount() {
   pickButton.disabled = count === 0;
 }
 
+function handleChapterCheckboxClick(event, index) {
+  const checkbox = event.currentTarget;
+  if (event.shiftKey && lastChapterSelectionIndex !== null) {
+    const checkboxes = getChapterCheckboxes();
+    const start = Math.min(lastChapterSelectionIndex, index);
+    const end = Math.max(lastChapterSelectionIndex, index);
+    for (let current = start; current <= end; current += 1) {
+      checkboxes[current].checked = checkbox.checked;
+    }
+  }
+  lastChapterSelectionIndex = index;
+  updateSelectedChapterCount();
+}
+
 function setAllChaptersSelected(checked) {
   for (const checkbox of getChapterCheckboxes()) checkbox.checked = checked;
+  lastChapterSelectionIndex = null;
   updateSelectedChapterCount();
 }
 
