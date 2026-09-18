@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Raw Image Save To Folder",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Save MangaRaw and Soraraw chapter images to a chosen folder.",
   "permissions": [
     "storage",
@@ -28,6 +28,16 @@
         "https://mangaraw.ac/manga/*/*"
       ],
       "js": [
+        "page-bridge.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://mangaraw.ac/manga/*"
+      ],
+      "js": [
         "content-mangaraw.js"
       ],
       "run_at": "document_start"
@@ -40,16 +50,6 @@
         "content-soraraw.js"
       ],
       "run_at": "document_start"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "page-bridge.js"
-      ],
-      "matches": [
-        "https://mangaraw.ac/*"
-      ]
     }
   ]
 }

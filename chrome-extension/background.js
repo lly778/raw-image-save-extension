@@ -10,7 +10,7 @@
 });
 
 async function startSaveJob(payload) {
-  if (!payload || (!payload.items && !payload.manifest)) {
+  if (!payload || (!payload.items && !payload.manifest && !payload.chapters)) {
     throw new Error('No save job payload was provided.');
   }
 
@@ -27,6 +27,6 @@ async function startSaveJob(payload) {
     active: true
   });
 
-  const count = payload.manifest?.pages?.length || payload.items?.length || 0;
+  const count = payload.chapters?.length || payload.manifest?.pages?.length || payload.items?.length || 0;
   return { jobId, count };
 }

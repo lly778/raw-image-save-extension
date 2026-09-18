@@ -10,9 +10,10 @@
     h1 { margin: 0 0 12px; font-size: 20px; }
     .meta { color: #a8bdba; margin-bottom: 16px; }
     .status { white-space: pre-wrap; word-break: break-word; background: #0d1113; border: 1px solid #233034; border-radius: 12px; padding: 14px; min-height: 180px; font-family: Consolas, "SFMono-Regular", monospace; }
-    .actions { margin-top: 14px; }
+    .actions { margin-top: 14px; display: flex; gap: 10px; }
     button { border: none; border-radius: 999px; padding: 10px 16px; color: #fff; font: 700 14px/1 "Segoe UI", "Microsoft YaHei", sans-serif; cursor: pointer; background: linear-gradient(135deg,#0ea5a4,#0f766e); }
     button:disabled { opacity: .65; cursor: wait; }
+    button.secondary { background: #39464b; }
   </style>
 </head>
 <body>
@@ -20,7 +21,10 @@
     <h1>Save Worker</h1>
     <div class="meta" id="meta">Preparing job...</div>
     <div class="status" id="status">Starting...</div>
-    <div class="actions"><button id="pick" hidden>Choose Folder And Continue</button></div>
+    <div class="actions">
+      <button id="pick" hidden>Choose Folder And Continue</button>
+      <button id="cancel" class="secondary" hidden>Cancel</button>
+    </div>
   </div>
   <script src="save-runner.js"></script>
 </body>

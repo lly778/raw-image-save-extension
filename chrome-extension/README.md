@@ -1,6 +1,6 @@
 # Raw Image Save To Folder
 
-One Chrome extension for saving chapter images from MangaRaw and Soraraw.
+One Chrome extension for saving chapter images from MangaRaw and Soraraw, including complete manga downloads from directory pages.
 
 ## Supported Sites
 
@@ -18,8 +18,20 @@ MangaRaw pages use the existing canvas reconstruction workflow. Soraraw pages de
 
 ## Use
 
+### One Chapter
+
 1. Open a supported chapter page.
 2. Click the floating `Save To Folder` button.
 3. In the worker tab, click `Choose Folder And Continue`.
+
+### All Chapters
+
+1. Open a manga directory/detail page.
+2. Click `Save All Chapters (N)`.
+3. Choose one destination folder in the worker tab.
+
+All images are saved directly into that folder. Filenames use chapter sequence, chapter label, and page sequence, for example `0001 - Chapter 1 - 001.webp`, so normal filename sorting keeps the manga in reading order.
+
+Soraraw chapters are resolved directly by the worker. MangaRaw chapters are rendered one at a time in a temporary background tab because its reader reconstructs pages with canvas. Failed chapters are reported and the queue continues.
 
 Chrome requires that direct click in the worker tab before it allows folder access.

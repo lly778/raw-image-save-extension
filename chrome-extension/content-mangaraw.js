@@ -2,9 +2,10 @@
   'use strict';
 
   const BUTTON_ID = 'codex-mangaraw-save-folder';
+  const ALL_BUTTON_ID = 'codex-mangaraw-save-all';
   const LABEL_IDLE = 'Save To Folder';
+  const LABEL_ALL = 'Save All Chapters';
   const LABEL_BUSY = 'Preparing...';
-  const BRIDGE_ATTR = 'data-codex-mangaraw-bridge';
 
   let requestCounter = 0;
   const pending = new Map();
@@ -12,21 +13,17 @@
   let countPollTimer = 0;
   let countLastValue = '';
   let countIdleRounds = 0;
+  let bulkWarmupPromise = null;
+  let bulkWarmupDone = false;
 
   function isReaderUrl() {
     const parts = location.pathname.split('/').filter(Boolean);
     return parts.length >= 3 && parts[0] === 'manga';
   }
 
-  function injectBridgeScript() {
-    if (document.documentElement.hasAttribute(BRIDGE_ATTR)) {
-      return;
-    }
-    document.documentElement.setAttribute(BRIDGE_ATTR, '1');
-    const script = document.createElement('script');
-    script.src = chrome.runtime.getURL('page-bridge.js');
-    script.onload = () => script.remove();
-    (document.head || document.documentElement).appendChild(script);
+  function isDirectoryUrl() {
+    const parts = location.pathname.split('/').filter(Boolean);
+    return parts.length === 2 && parts[0] === 'manga';
   }
 
   function requestState() {
@@ -52,6 +49,43 @@
     window.clearTimeout(item.timer);
     pending.delete(detail.requestId);
     item.resolve(detail.payload);
+  });
+
+  function wait(delay) {
+    return new Promise((resolve) => window.setTimeout(resolve, delay));
+  }
+
+  async function warmUpReader() {
+    const previousY = window.scrollY;
+    const slots = [...document.querySelectorAll('.cz[data-i]')]
+      .sort((a, b) => Number(a.getAttribute('data-i')) - Number(b.getAttribute('data-i')));
+    for (const slot of slots) {
+      slot.scrollIntoView({ block: 'center' });
+      await wait(120);
+    }
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    await wait(800);
+    window.scrollTo(0, previousY);
+  }
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== 'collect-mangaraw-state' || !isReaderUrl()) {
+      return false;
+    }
+    if (!bulkWarmupDone && !bulkWarmupPromise) {
+      bulkWarmupPromise = warmUpReader()
+        .then(() => {
+          bulkWarmupDone = true;
+        })
+        .finally(() => {
+          bulkWarmupPromise = null;
+        });
+    }
+    Promise.resolve(bulkWarmupPromise)
+      .then(() => requestState())
+      .then((state) => sendResponse({ ok: true, state }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
   });
 
   function setButtonState(button, text, disabled) {
@@ -278,6 +312,103 @@
     throw new Error('No saveable image data was found. Wait for the chapter to finish rendering and retry.');
   }
 
+  function collectDirectoryChapters() {
+    const parts = location.pathname.split('/').filter(Boolean);
+    const slug = decodeURIComponent(parts[1] || '');
+    const seen = new Set();
+    const chapters = [];
+    for (const anchor of document.querySelectorAll('a[href]')) {
+      let url;
+      try {
+        url = new URL(anchor.href, location.href);
+      } catch {
+        continue;
+      }
+      const urlParts = url.pathname.split('/').filter(Boolean);
+      const candidateSlug = decodeURIComponent(urlParts[1] || '');
+      if (url.origin !== location.origin || urlParts.length < 3 || urlParts[0] !== 'manga' || candidateSlug !== slug) {
+        continue;
+      }
+      url.search = '';
+      url.hash = '';
+      const normalizedUrl = url.href.endsWith('/') ? url.href : `${url.href}/`;
+      if (seen.has(normalizedUrl)) {
+        continue;
+      }
+      seen.add(normalizedUrl);
+      const fallback = decodeURIComponent(urlParts[urlParts.length - 1]);
+      const label = (anchor.textContent || fallback).replace(/\s+/g, ' ').trim() || fallback;
+      chapters.push({
+        url: normalizedUrl,
+        label,
+        order: chapters.length + 1
+      });
+    }
+    return chapters.reverse().map((chapter, index) => ({ ...chapter, order: index + 1 }));
+  }
+
+  async function handleSaveAll(button, chapters) {
+    setButtonState(button, `Queueing ${chapters.length} chapters...`, true);
+    const response = await chrome.runtime.sendMessage({
+      type: 'start-save-job',
+      payload: {
+        mode: 'bulk',
+        site: 'mangaraw',
+        title: getSafeBaseName(document.querySelector('h1')?.textContent || document.title),
+        pageUrl: location.href,
+        chapters
+      }
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || 'Bulk save worker launch failed.');
+    }
+    setButtonState(button, `Folder ${response.count} chapters`, true);
+    window.setTimeout(() => setButtonState(button, `${LABEL_ALL} (${chapters.length})`, false), 1800);
+  }
+
+  function createBulkUi() {
+    if (!isDirectoryUrl()) {
+      return null;
+    }
+    const existingButton = document.getElementById(ALL_BUTTON_ID);
+    if (existingButton) {
+      return existingButton;
+    }
+    const chapters = collectDirectoryChapters();
+    if (!chapters.length || !document.body) {
+      return null;
+    }
+    const button = document.createElement('button');
+    button.id = ALL_BUTTON_ID;
+    button.type = 'button';
+    button.textContent = `${LABEL_ALL} (${chapters.length})`;
+    button.style.cssText = [
+      'position:fixed',
+      'right:18px',
+      'bottom:18px',
+      'z-index:2147483647',
+      'border:none',
+      'border-radius:999px',
+      'padding:12px 18px',
+      'color:#fff',
+      'font:700 14px/1 "Segoe UI","Microsoft YaHei",sans-serif',
+      'box-shadow:0 10px 30px rgba(0,0,0,.35)',
+      'cursor:pointer',
+      'background:linear-gradient(135deg,#c46b16,#8f4b0f)'
+    ].join(';');
+    button.addEventListener('click', () => {
+      if (runningButtons.has(button)) return;
+      runningButtons.add(button);
+      Promise.resolve(handleSaveAll(button, chapters)).catch((error) => {
+        console.error('[mangaraw-bulk-save]', error);
+        alert(error instanceof Error ? error.message : String(error));
+        setButtonState(button, 'Failed, retry', false);
+      }).finally(() => runningButtons.delete(button));
+    });
+    document.body.appendChild(button);
+    return button;
+  }
+
   function createUi() {
     if (!isReaderUrl()) {
       return null;
@@ -332,18 +463,18 @@
     return button;
   }
 
-  injectBridgeScript();
-  if (isReaderUrl()) {
-    startSaveCountPolling();
+  function initializePage() {
+    if (isReaderUrl()) {
+      createUi();
+      startSaveCountPolling();
+    } else if (isDirectoryUrl()) {
+      createBulkUi();
+    }
   }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      if (isReaderUrl()) {
-        createUi();
-        startSaveCountPolling();
-      }
-    }, { once: true });
-  } else if (isReaderUrl()) {
-    createUi();
+    document.addEventListener('DOMContentLoaded', initializePage, { once: true });
+  } else {
+    initializePage();
   }
 })();

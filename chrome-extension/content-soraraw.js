@@ -2,7 +2,9 @@
   'use strict';
 
   const BUTTON_ID = 'codex-soraraw-save-folder';
+  const ALL_BUTTON_ID = 'codex-soraraw-save-all';
   const LABEL_IDLE = 'Save To Folder';
+  const LABEL_ALL = 'Save All Chapters';
   const LABEL_BUSY = 'Preparing...';
   const API_IMAGE = 'https://api.mangarawgo.site';
   const IMAGE_LIST_KEY = '/fuCkYou!!!';
@@ -22,6 +24,11 @@
   function isReaderUrl() {
     const parts = location.pathname.split('/').filter(Boolean);
     return parts.length >= 3 && parts[0] === 'manga' && /^ch-[^/]+$/i.test(parts[2]);
+  }
+
+  function isDirectoryUrl() {
+    const parts = location.pathname.split('/').filter(Boolean);
+    return parts.length === 2 && parts[0] === 'manga';
   }
 
   function captureNextDataFromNode(node) {
@@ -48,14 +55,10 @@
       return;
     }
     lastObservedPageKey = currentPageKey;
-    if (!isReaderUrl()) {
-      removeUi();
-      return;
-    }
+    removeUi();
     window.setTimeout(() => {
       resetCapturedNextData();
-      createUi();
-      startCountPolling();
+      initializePage();
     }, 0);
   }
 
@@ -133,6 +136,18 @@
       throw new Error('Chapter metadata was not found. Refresh the page and retry.');
     }
     return { data, chapter };
+  }
+
+  async function getDirectoryData() {
+    if (!capturedNextData || capturedNextDataUrl !== getPageKey()) {
+      await fetchNextDataForCurrentUrl();
+    }
+    const data = capturedNextData?.props?.pageProps?.data;
+    const manga = data?.manga;
+    if (!manga?.id || !Array.isArray(manga?.chapters)) {
+      throw new Error('Manga chapter list was not found. Refresh the page and retry.');
+    }
+    return { data, manga };
   }
 
   function normalizeBase(base, fallback) {
@@ -291,6 +306,9 @@
       return;
     }
     document.getElementById(BUTTON_ID)?.remove();
+    document.getElementById(ALL_BUTTON_ID)?.remove();
+    window.clearTimeout(countPollTimer);
+    countPollTimer = 0;
   }
 
   async function pollImageCount() {
@@ -339,6 +357,94 @@
     window.setTimeout(() => {
       setButtonState(button, `${LABEL_IDLE} (${job.items.length})`, false);
     }, 1800);
+  }
+
+  async function buildBulkJob() {
+    const { manga } = await getDirectoryData();
+    const chapters = manga.chapters
+      .filter((chapter) => chapter?.path && chapter?.mode !== 'spoiler')
+      .map((chapter) => {
+        const rawLabel = chapter.name ?? chapter.title ?? chapter.order ?? chapter.id;
+        return {
+          url: `${location.origin}/manga/${manga.slug}/${String(chapter.path).replace(`${manga.slug}-`, '')}`,
+          label: `Chapter ${rawLabel}`,
+          order: Number(chapter.order ?? chapter.name ?? 0)
+        };
+      })
+      .sort((a, b) => Number(a.order) - Number(b.order) || a.label.localeCompare(b.label, undefined, { numeric: true }));
+    if (!chapters.length) {
+      throw new Error('No downloadable chapters were found.');
+    }
+    return {
+      mode: 'bulk',
+      site: 'soraraw',
+      title: getSafeBaseName(manga.name || document.title),
+      pageUrl: location.href,
+      chapters
+    };
+  }
+
+  async function handleSaveAll(button) {
+    setButtonState(button, 'Preparing chapters...', true);
+    const job = await buildBulkJob();
+    setButtonState(button, `Queueing ${job.chapters.length} chapters...`, true);
+    const response = await chrome.runtime.sendMessage({ type: 'start-save-job', payload: job });
+    if (!response?.ok) {
+      throw new Error(response?.error || 'Bulk save worker launch failed.');
+    }
+    setButtonState(button, `Folder ${response.count} chapters`, true);
+    window.setTimeout(() => setButtonState(button, `${LABEL_ALL} (${job.chapters.length})`, false), 1800);
+  }
+
+  async function createBulkUi() {
+    if (!isDirectoryUrl()) {
+      return null;
+    }
+    const existingButton = document.getElementById(ALL_BUTTON_ID);
+    if (existingButton) {
+      return existingButton;
+    }
+    if (!document.body) {
+      return null;
+    }
+    let chapterCount = 0;
+    try {
+      const { manga } = await getDirectoryData();
+      chapterCount = manga.chapters.filter((chapter) => chapter?.path && chapter?.mode !== 'spoiler').length;
+    } catch (error) {
+      console.debug('[soraraw-bulk-save] chapter count failed', error);
+    }
+    const button = document.createElement('button');
+    button.id = ALL_BUTTON_ID;
+    button.type = 'button';
+    button.textContent = chapterCount > 0 ? `${LABEL_ALL} (${chapterCount})` : LABEL_ALL;
+    button.style.cssText = [
+      'position:fixed',
+      'right:18px',
+      'bottom:18px',
+      'z-index:2147483647',
+      'border:none',
+      'border-radius:999px',
+      'padding:12px 18px',
+      'color:#fff',
+      'font:700 14px/1 "Segoe UI","Microsoft YaHei",sans-serif',
+      'box-shadow:0 10px 30px rgba(0,0,0,.35)',
+      'cursor:pointer',
+      'background:linear-gradient(135deg,#0ea5a4,#0f766e)'
+    ].join(';');
+    button.addEventListener('click', () => {
+      if (running) return;
+      running = true;
+      Promise.resolve(handleSaveAll(button)).catch((error) => {
+        console.error('[soraraw-bulk-save]', error);
+        alert(error instanceof Error ? error.message : String(error));
+        setButtonState(button, 'Failed, retry', false);
+      }).finally(() => {
+        running = false;
+      });
+    });
+    document.body.appendChild(button);
+    return button;
   }
 
   function createUi() {
@@ -392,17 +498,20 @@
     return button;
   }
 
+  function initializePage() {
+    if (isReaderUrl()) {
+      createUi();
+      startCountPolling();
+    } else if (isDirectoryUrl()) {
+      createBulkUi();
+    }
+  }
+
   startNextDataCapture();
   watchRouteChanges();
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      if (isReaderUrl()) {
-        createUi();
-        startCountPolling();
-      }
-    }, { once: true });
-  } else if (isReaderUrl()) {
-    createUi();
-    startCountPolling();
+    document.addEventListener('DOMContentLoaded', initializePage, { once: true });
+  } else {
+    initializePage();
   }
 })();
