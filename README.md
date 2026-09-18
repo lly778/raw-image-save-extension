@@ -35,4 +35,6 @@ All images are saved directly into that folder. Filenames use chapter sequence, 
 
 Soraraw chapters are resolved directly by the worker. MangaRaw chapters are rendered one at a time in a temporary background tab because its reader reconstructs pages with canvas. Failed chapters are reported and the queue continues.
 
+After a selected batch finishes, successful chapters are cleared from the selection while failed chapters remain selected. More chapters can then be chosen and downloaded to the same folder, or the destination folder can be changed.
+
 Chrome requires that direct click in the worker tab before it allows folder access.

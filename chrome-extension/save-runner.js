@@ -10,9 +10,12 @@ const chapterSearch = document.getElementById('chapter-search');
 const selectedCount = document.getElementById('selected-count');
 const selectAllButton = document.getElementById('select-all');
 const clearAllButton = document.getElementById('clear-all');
+const changeFolderButton = document.getElementById('change-folder');
 let pendingJob = null;
 let abortController = null;
 let lastChapterSelectionIndex = null;
+let selectedDirectoryHandle = null;
+let storedJobRemoved = false;
 
 main().catch((error) => appendStatus(`Failed: ${error instanceof Error ? error.message : String(error)}`));
 
@@ -31,11 +34,12 @@ async function main() {
     appendStatus('Choose the chapters to download, then choose a folder.');
   }
   appendStatus('This step needs one direct click in this page before Chrome will allow choosing a folder.');
-  appendStatus('Click "Choose Folder And Continue" below.');
+  appendStatus(job.mode === 'bulk' ? 'Use the download button below when ready.' : 'Click "Choose Folder And Continue" below.');
 
   pickButton.hidden = false;
   pickButton.focus();
   pickButton.addEventListener('click', () => tryStartSave());
+  changeFolderButton.addEventListener('click', () => chooseNewDirectory());
 }
 
 function appendStatus(text) {
@@ -49,7 +53,10 @@ async function tryStartSave() {
   try {
     const job = getSelectedJob(pendingJob.job);
     setChapterSelectorDisabled(true);
-    const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    changeFolderButton.hidden = true;
+    if (!selectedDirectoryHandle) {
+      selectedDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    }
     pickButton.hidden = true;
     cancelButton.hidden = false;
     cancelButton.disabled = false;
@@ -60,15 +67,28 @@ async function tryStartSave() {
       appendStatus('Cancel requested. Finishing the current file...');
     };
     appendStatus('Folder selected. Saving files...');
-    await runSaveJob(job, dirHandle, abortController.signal);
+    const result = await runSaveJob(job, selectedDirectoryHandle, abortController.signal);
     cancelButton.hidden = true;
-    appendStatus('Done. You can close this tab.');
-    await chrome.storage.local.remove(pendingJob.jobId).catch(() => {});
-    pendingJob = null;
+    if (job.mode === 'bulk') {
+      clearCompletedChapterSelections(result?.completedSequences || []);
+      setChapterSelectorDisabled(false);
+      pickButton.hidden = false;
+      changeFolderButton.hidden = false;
+      appendStatus('Batch finished. Choose more chapters to continue, or close this tab.');
+      if (!storedJobRemoved) {
+        await chrome.storage.local.remove(pendingJob.jobId).catch(() => {});
+        storedJobRemoved = true;
+      }
+    } else {
+      appendStatus('Done. You can close this tab.');
+      await chrome.storage.local.remove(pendingJob.jobId).catch(() => {});
+      pendingJob = null;
+    }
   } catch (error) {
     pickButton.hidden = false;
     cancelButton.hidden = true;
     setChapterSelectorDisabled(false);
+    changeFolderButton.hidden = !selectedDirectoryHandle || chapterSelector.hidden;
     if (chapterSelector.hidden) {
       pickButton.disabled = false;
     } else {
@@ -76,6 +96,22 @@ async function tryStartSave() {
     }
     const message = error instanceof Error ? error.message : String(error);
     appendStatus(error?.name === 'AbortError' ? 'Canceled.' : `Save failed: ${message}`);
+  }
+}
+
+async function chooseNewDirectory() {
+  if (!pendingJob || changeFolderButton.disabled) return;
+  changeFolderButton.disabled = true;
+  try {
+    selectedDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    appendStatus('Destination folder changed.');
+    updateSelectedChapterCount();
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      appendStatus(`Folder selection failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } finally {
+    changeFolderButton.disabled = false;
   }
 }
 
@@ -114,7 +150,9 @@ function updateSelectedChapterCount() {
   const checkboxes = getChapterCheckboxes();
   const count = checkboxes.filter((checkbox) => checkbox.checked).length;
   selectedCount.textContent = `${count} / ${checkboxes.length} selected`;
-  pickButton.textContent = count ? `Choose Folder And Download ${count}` : 'Choose At Least One Chapter';
+  pickButton.textContent = count
+    ? selectedDirectoryHandle ? `Download ${count} Selected` : `Choose Folder And Download ${count}`
+    : 'Choose At Least One Chapter';
   pickButton.disabled = count === 0;
 }
 
@@ -134,6 +172,15 @@ function handleChapterCheckboxClick(event, index) {
 
 function setAllChaptersSelected(checked) {
   for (const checkbox of getChapterCheckboxes()) checkbox.checked = checked;
+  lastChapterSelectionIndex = null;
+  updateSelectedChapterCount();
+}
+
+function clearCompletedChapterSelections(sequences) {
+  const completed = new Set(sequences.map(Number));
+  for (const checkbox of getChapterCheckboxes()) {
+    if (completed.has(Number(checkbox.dataset.index) + 1)) checkbox.checked = false;
+  }
   lastChapterSelectionIndex = null;
   updateSelectedChapterCount();
 }
@@ -167,8 +214,7 @@ function getSelectedJob(job) {
 
 async function runSaveJob(job, dirHandle, signal) {
   if (job.mode === 'bulk') {
-    await saveBulk(job, dirHandle, signal);
-    return;
+    return saveBulk(job, dirHandle, signal);
   }
   if (job.mode === 'reconstructed') {
     await saveReconstructed(job.manifest, dirHandle);
@@ -193,6 +239,7 @@ async function saveBulk(job, dirHandle, signal) {
   const chapters = Array.isArray(job.chapters) ? job.chapters : [];
   if (!chapters.length) throw new Error('No chapters were provided.');
   const failures = [];
+  const completedSequences = [];
   const sequenceWidth = Math.max(4, String(job.totalChapterCount || chapters.length).length);
 
   for (let index = 0; index < chapters.length; index += 1) {
@@ -222,6 +269,7 @@ async function saveBulk(job, dirHandle, signal) {
       } else {
         throw new Error(`Unsupported bulk site: ${job.site}`);
       }
+      completedSequences.push(sequence);
     } catch (error) {
       if (error?.name === 'AbortError') throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -234,6 +282,7 @@ async function saveBulk(job, dirHandle, signal) {
   if (failures.length) {
     appendStatus(`Failed chapters:\n${failures.join('\n')}`);
   }
+  return { completedSequences, failedCount: failures.length };
 }
 
 async function saveBulkItems(items, dirHandle, prefix, site, pageUrl, signal) {
