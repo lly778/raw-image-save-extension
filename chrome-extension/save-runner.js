@@ -11,6 +11,8 @@ const selectedCount = document.getElementById('selected-count');
 const selectAllButton = document.getElementById('select-all');
 const clearAllButton = document.getElementById('clear-all');
 const changeFolderButton = document.getElementById('change-folder');
+const zipOption = document.getElementById('zip-option');
+const saveAsZipCheckbox = document.getElementById('save-as-zip');
 let pendingJob = null;
 let abortController = null;
 let lastChapterSelectionIndex = null;
@@ -31,10 +33,12 @@ async function main() {
   appendStatus('Job loaded.');
   if (job.mode === 'bulk') {
     setupChapterSelector(job.chapters);
+    zipOption.querySelector('span').textContent = 'Save each chapter as a ZIP';
     appendStatus('Choose the chapters to download, then choose a folder.');
   }
+  zipOption.hidden = false;
   appendStatus('This step needs one direct click in this page before Chrome will allow choosing a folder.');
-  appendStatus(job.mode === 'bulk' ? 'Use the download button below when ready.' : 'Click "Choose Folder And Continue" below.');
+  appendStatus(job.mode === 'bulk' ? 'Choose ZIP or separate images, then use the download button below.' : 'Choose ZIP or separate images, then click "Choose Folder And Continue".');
 
   pickButton.hidden = false;
   pickButton.focus();
@@ -66,7 +70,7 @@ async function tryStartSave() {
       abortController.abort();
       appendStatus('Cancel requested. Finishing the current file...');
     };
-    appendStatus('Folder selected. Saving files...');
+    appendStatus(job.saveAsZip ? 'Folder selected. Creating chapter ZIP files...' : 'Folder selected. Saving images...');
     const result = await runSaveJob(job, selectedDirectoryHandle, abortController.signal);
     cancelButton.hidden = true;
     if (job.mode === 'bulk') {
@@ -201,7 +205,7 @@ function setChapterSelectorDisabled(disabled) {
 }
 
 function getSelectedJob(job) {
-  if (job.mode !== 'bulk') return job;
+  if (job.mode !== 'bulk') return { ...job, saveAsZip: saveAsZipCheckbox.checked };
   const chapters = getChapterCheckboxes()
     .filter((checkbox) => checkbox.checked)
     .map((checkbox) => {
@@ -209,7 +213,7 @@ function getSelectedJob(job) {
       return { ...job.chapters[index], sequence: index + 1 };
     });
   if (!chapters.length) throw new Error('Choose at least one chapter.');
-  return { ...job, chapters, totalChapterCount: job.chapters.length };
+  return { ...job, chapters, totalChapterCount: job.chapters.length, saveAsZip: saveAsZipCheckbox.checked };
 }
 
 async function runSaveJob(job, dirHandle, signal) {
@@ -217,22 +221,38 @@ async function runSaveJob(job, dirHandle, signal) {
     return saveBulk(job, dirHandle, signal);
   }
   if (job.mode === 'reconstructed') {
-    await saveReconstructed(job.manifest, dirHandle);
+    await saveReconstructed(job.manifest, dirHandle, signal, job.saveAsZip);
     return;
   }
-  await saveImages(job, dirHandle);
+  await saveImages(job, dirHandle, signal);
 }
 
-async function saveImages(job, dirHandle) {
+async function saveImages(job, dirHandle, signal) {
   const items = dedupeDownloadItems(job.items);
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    appendStatus(`Saving ${index + 1}/${items.length}...`);
-    const response = await fetchImage(item.url, job);
-    if (!response.ok) throw new Error(`fetch failed with HTTP ${response.status}`);
-    const blob = await response.blob();
-    await writeFile(dirHandle, flattenFilename(item.filename || `image-${index + 1}.png`), blob);
+  if (!items.length) throw new Error('No images were provided.');
+  if (!job.saveAsZip) {
+    for (let index = 0; index < items.length; index += 1) {
+      throwIfAborted(signal);
+      const item = items[index];
+      appendStatus(`Saving ${index + 1}/${items.length}...`);
+      const response = await fetchImage(item.url, job, signal);
+      if (!response.ok) throw new Error(`fetch failed with HTTP ${response.status}`);
+      const blob = await prepareSorarawImage(await response.blob(), item);
+      await writeFile(dirHandle, flattenFilename(item.filename || `image-${index + 1}.png`), blob);
+    }
+    return;
   }
+  await withChapterZip(dirHandle, job.title, async (zip) => {
+    for (let index = 0; index < items.length; index += 1) {
+      throwIfAborted(signal);
+      const item = items[index];
+      appendStatus(`Saving ${index + 1}/${items.length}...`);
+      const response = await fetchImage(item.url, job, signal);
+      if (!response.ok) throw new Error(`fetch failed with HTTP ${response.status}`);
+      const blob = await prepareSorarawImage(await response.blob(), item);
+      await zip.addFile(flattenFilename(item.filename || `image-${index + 1}.png`), blob, signal);
+    }
+  });
 }
 
 async function saveBulk(job, dirHandle, signal) {
@@ -251,17 +271,29 @@ async function saveBulk(job, dirHandle, signal) {
     try {
       if (job.site === 'soraraw') {
         const items = await getSorarawChapterItems(chapter.url, signal);
-        await saveBulkItems(items, dirHandle, prefix, 'soraraw', chapter.url, signal);
+        if (job.saveAsZip) {
+          await withChapterZip(dirHandle, prefix, (zip) => saveBulkItems(items, dirHandle, prefix, 'soraraw', chapter.url, signal, zip));
+        } else {
+          await saveBulkItems(items, dirHandle, prefix, 'soraraw', chapter.url, signal);
+        }
       } else if (job.site === 'mangaraw') {
         const capture = await collectMangarawChapterState(chapter.url, signal);
         try {
           const pages = normalizeMangarawPages(capture.state);
           if (pages.length) {
-            await saveBulkReconstructed(pages, dirHandle, prefix, capture.state.location || chapter.url, signal);
+            if (job.saveAsZip) {
+              await withChapterZip(dirHandle, prefix, (zip) => saveBulkReconstructed(pages, dirHandle, prefix, capture.state.location || chapter.url, signal, zip));
+            } else {
+              await saveBulkReconstructed(pages, dirHandle, prefix, capture.state.location || chapter.url, signal);
+            }
           } else {
             const items = getMangarawImageItems(capture.state);
             if (!items.length) throw new Error('No complete image data was captured.');
-            await saveBulkItems(items, dirHandle, prefix, 'mangaraw', capture.state.location || chapter.url, signal);
+            if (job.saveAsZip) {
+              await withChapterZip(dirHandle, prefix, (zip) => saveBulkItems(items, dirHandle, prefix, 'mangaraw', capture.state.location || chapter.url, signal, zip));
+            } else {
+              await saveBulkItems(items, dirHandle, prefix, 'mangaraw', capture.state.location || chapter.url, signal);
+            }
           }
         } finally {
           await chrome.tabs.remove(capture.tabId).catch(() => {});
@@ -285,26 +317,36 @@ async function saveBulk(job, dirHandle, signal) {
   return { completedSequences, failedCount: failures.length };
 }
 
-async function saveBulkItems(items, dirHandle, prefix, site, pageUrl, signal) {
+async function saveBulkItems(items, dirHandle, prefix, site, pageUrl, signal, zip) {
   for (let index = 0; index < items.length; index += 1) {
     throwIfAborted(signal);
     const item = items[index];
-    const ext = getImageExtension(item.url, item.filename);
+    const ext = item.chapterMode === 'canva2' ? 'png' : getImageExtension(item.url, item.filename);
     const filename = `${prefix} - ${String(index + 1).padStart(3, '0')}.${ext}`;
     const response = site === 'soraraw'
       ? await fetch(item.url, { credentials: 'omit', referrerPolicy: 'no-referrer', signal })
       : await fetchWithHotlinkHeaders(item.url, pageUrl, signal);
     if (!response.ok) throw new Error(`fetch failed with HTTP ${response.status}`);
-    await writeFile(dirHandle, filename, await response.blob());
+    const blob = site === 'soraraw'
+      ? await prepareSorarawImage(await response.blob(), item)
+      : await response.blob();
+    if (zip) await zip.addFile(filename, blob, signal);
+    else await writeFile(dirHandle, filename, blob);
   }
 }
 
-async function saveBulkReconstructed(pages, dirHandle, prefix, pageUrl, signal) {
+async function saveBulkReconstructed(pages, dirHandle, prefix, pageUrl, signal, zip) {
   const sourceMap = await fetchSourceBitmaps(pages, pageUrl, signal);
-  for (let index = 0; index < pages.length; index += 1) {
-    throwIfAborted(signal);
-    const blob = await renderReconstructedPage(pages[index], sourceMap);
-    await writeFile(dirHandle, `${prefix} - ${String(index + 1).padStart(3, '0')}.png`, blob);
+  try {
+    for (let index = 0; index < pages.length; index += 1) {
+      throwIfAborted(signal);
+      const blob = await renderReconstructedPage(pages[index], sourceMap);
+      const filename = `${prefix} - ${String(index + 1).padStart(3, '0')}.png`;
+      if (zip) await zip.addFile(filename, blob, signal);
+      else await writeFile(dirHandle, filename, blob);
+    }
+  } finally {
+    for (const bitmap of sourceMap.values()) bitmap.close();
   }
 }
 
@@ -359,7 +401,11 @@ async function getSorarawChapterItems(chapterUrl, signal) {
       ? encodedPath
       : await decodeSorarawImagePath(encodedPath, chapter.uuid);
     const base = getSorarawImageBase(chapter, serverKey);
-    items.push({ url: path.startsWith('http') ? path : `${base}/${path.replace(/^\/+/, '')}` });
+    items.push({
+      url: path.startsWith('http') ? path : `${base}/${path.replace(/^\/+/, '')}`,
+      chapterId: chapter.id,
+      chapterMode: chapter.mode
+    });
   }
   if (!items.length) throw new Error('No downloadable images were decoded.');
   return items;
@@ -508,14 +554,43 @@ function getMangarawImageItems(state) {
   }).map((url) => ({ url }));
 }
 
-async function saveReconstructed(manifest, dirHandle) {
+async function saveReconstructed(manifest, dirHandle, signal, saveAsZip = true) {
   const pages = Array.isArray(manifest?.pages) ? manifest.pages : [];
   if (!pages.length) throw new Error('No reconstruction pages were provided.');
-  const sourceMap = await fetchSourceBitmaps(pages, manifest.location);
-  for (let index = 0; index < pages.length; index += 1) {
-    appendStatus(`Saving ${index + 1}/${pages.length}...`);
-    const blob = await renderReconstructedPage(pages[index], sourceMap);
-    await writeFile(dirHandle, flattenFilename(buildOutputFilename(manifest.title, index)), blob);
+  const sourceMap = await fetchSourceBitmaps(pages, manifest.location, signal);
+  try {
+    if (saveAsZip) {
+      await withChapterZip(dirHandle, manifest.title, async (zip) => {
+        for (let index = 0; index < pages.length; index += 1) {
+          throwIfAborted(signal);
+          appendStatus(`Saving ${index + 1}/${pages.length}...`);
+          const blob = await renderReconstructedPage(pages[index], sourceMap);
+          await zip.addFile(flattenFilename(buildOutputFilename(manifest.title, index)), blob, signal);
+        }
+      });
+    } else {
+      for (let index = 0; index < pages.length; index += 1) {
+        throwIfAborted(signal);
+        appendStatus(`Saving ${index + 1}/${pages.length}...`);
+        const blob = await renderReconstructedPage(pages[index], sourceMap);
+        await writeFile(dirHandle, flattenFilename(buildOutputFilename(manifest.title, index)), blob);
+      }
+    }
+  } finally {
+    for (const bitmap of sourceMap.values()) bitmap.close();
+  }
+}
+
+async function withChapterZip(dirHandle, title, addFiles) {
+  const filename = `${buildArchiveBaseName(title)}.zip`;
+  const zip = await createZipWriter(dirHandle, filename);
+  try {
+    await addFiles(zip);
+    await zip.close();
+    appendStatus(`Created ${filename}`);
+  } catch (error) {
+    await zip.abort().catch(() => {});
+    throw error;
   }
 }
 
@@ -537,7 +612,7 @@ function dedupeDownloadItems(items) {
     const url = String(item?.url || '').trim();
     if (!url || seen.has(url)) continue;
     seen.add(url);
-    result.push({ url, filename: item.filename || 'image.png' });
+    result.push({ ...item, url, filename: item.filename || 'image.png' });
   }
   return result;
 }
@@ -598,14 +673,15 @@ function drawPiece(context, bitmap, piece) {
   context.drawImage(bitmap, Number(piece.dx || 0), Number(piece.dy || 0));
 }
 
-async function fetchImage(url, job) {
+async function fetchImage(url, job, signal) {
   if (job.site === 'soraraw') {
     return fetch(url, {
       credentials: 'omit',
-      referrerPolicy: 'no-referrer'
+      referrerPolicy: 'no-referrer',
+      signal
     });
   }
-  return fetchWithHotlinkHeaders(url, job.pageUrl);
+  return fetchWithHotlinkHeaders(url, job.pageUrl, signal);
 }
 
 async function fetchWithHotlinkHeaders(url, pageUrl, signal) {

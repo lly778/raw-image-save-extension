@@ -24,6 +24,9 @@
     .chapter-option input { width: 16px; height: 16px; accent-color: #14b8a6; }
     .chapter-option[hidden] { display: none; }
     .status { white-space: pre-wrap; word-break: break-word; background: #0d1113; border: 1px solid #233034; border-radius: 8px; padding: 14px; min-height: 180px; font-family: Consolas, "SFMono-Regular", monospace; }
+    .zip-option { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; cursor: pointer; }
+    .zip-option[hidden] { display: none; }
+    .zip-option input { width: 16px; height: 16px; accent-color: #14b8a6; }
     .actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
     button { border: none; border-radius: 999px; padding: 10px 16px; color: #fff; font: 700 14px/1 "Segoe UI", "Microsoft YaHei", sans-serif; cursor: pointer; background: linear-gradient(135deg,#0ea5a4,#0f766e); }
     button:disabled { opacity: .65; cursor: wait; }
@@ -46,6 +49,7 @@
       </div>
       <div class="chapter-list" id="chapter-list"></div>
     </section>
+    <label class="zip-option" id="zip-option" hidden><input id="save-as-zip" type="checkbox" checked><span>Save this chapter as a ZIP</span></label>
     <div class="status" id="status">Starting...</div>
     <div class="actions">
       <button id="pick" hidden>Choose Folder And Continue</button>
@@ -53,6 +57,8 @@
       <button id="cancel" class="secondary" hidden>Cancel</button>
     </div>
   </div>
+  <script src="zip-writer.js"></script>
+  <script src="soraraw-unscramble.js"></script>
   <script src="save-runner.js"></script>
 </body>
 </html>

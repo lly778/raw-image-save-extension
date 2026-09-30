@@ -277,10 +277,15 @@
         ? encodedPath
         : await decodeImagePath(encodedPath, chapter.uuid);
       const url = path.startsWith('http') ? path : `${getImageBase(chapter, serverKey)}/${path.replace(/^\/+/, '')}`;
+      const filename = getFilename(title, image, index, url);
       items.push({
         url,
         order: Number(image?.order || index + 1),
-        filename: getFilename(title, image, index, url)
+        filename: chapter.mode === 'canva2'
+          ? filename.replace(/\.[^.]+$/, '.png')
+          : filename,
+        chapterId: chapter.id,
+        chapterMode: chapter.mode
       });
     }
 

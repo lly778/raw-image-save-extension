@@ -7,7 +7,8 @@ One Chrome extension for saving chapter images from MangaRaw and Soraraw, includ
 - `https://mangaraw.ac/manga/*/*`
 - `https://soraraw.com/manga/*/ch-*`
 
-MangaRaw pages use the existing canvas reconstruction workflow. Soraraw pages decode the encrypted chapter image manifest and save the original WebP files.
+MangaRaw pages use the existing canvas reconstruction workflow. Soraraw pages decode the encrypted chapter image manifest. Standard Soraraw images are saved in their original format; `canva2` chapters are restored to readable PNG images before saving.
+The `canva2` decoder is bundled from `https://soraraw.com/soraraw.wasm`.
 
 ## Install
 
@@ -22,16 +23,16 @@ MangaRaw pages use the existing canvas reconstruction workflow. Soraraw pages de
 
 1. Open a supported chapter page.
 2. Click the floating `Save To Folder` button.
-3. In the worker tab, click `Choose Folder And Continue`.
+3. In the worker tab, choose whether to save the chapter as a ZIP (selected by default) or as separate images, then click `Choose Folder And Continue`.
 
 ### All Chapters
 
 1. Open a manga directory/detail page.
 2. Click `Download Chapters (N)`.
 3. Choose the chapters to download in the worker tab. All chapters are selected by default, and the list can be searched, selected, or cleared. Hold `Shift` while clicking to select or clear a chapter range.
-4. Choose one destination folder.
+4. Choose whether to save each chapter as a ZIP (selected by default) or as separate images, then choose one destination folder.
 
-All images are saved directly into that folder. Filenames use chapter sequence, chapter label, and page sequence, for example `0001 - Chapter 1 - 001.webp`, so normal filename sorting keeps the manga in reading order.
+ZIP mode writes one ZIP per chapter into that folder. Separate-image mode writes all images directly into the folder. Filenames use chapter sequence, chapter label, and page sequence, for example `0001 - Chapter 1 - 001.webp`, so normal filename sorting keeps the manga in reading order.
 
 Soraraw chapters are resolved directly by the worker. MangaRaw chapters are rendered one at a time in a temporary background tab because its reader reconstructs pages with canvas. Failed chapters are reported and the queue continues.
 
