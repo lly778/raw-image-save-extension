@@ -4,10 +4,11 @@ One Chrome extension for saving chapter images from MangaRaw and Soraraw, includ
 
 ## Supported Sites
 
-- `https://mangaraw.ac/manga/*/*`
+- `https://mangaraw.ma/manga/*/*`
 - `https://soraraw.com/manga/*/ch-*`
 
 MangaRaw pages use the existing canvas reconstruction workflow. Soraraw pages decode the encrypted chapter image manifest. Standard Soraraw images are saved in their original format; `canva2` chapters are restored to readable PNG images before saving.
+MangaRaw supports the current `.imageChap` reader and chapter buttons as well as the older `.cz` reader and chapter links. Chapter downloads wait for every page to render; shuffled source images are not used as a fallback. Batch downloads obtain a fresh reader token for each chapter.
 The `canva2` decoder is bundled from `https://soraraw.com/soraraw.wasm`.
 
 ## Install

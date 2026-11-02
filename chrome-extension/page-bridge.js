@@ -1,4 +1,5 @@
 ﻿(() => {
+  const SLOT_SELECTOR = '.cz[data-i], .imageChap[data-i]';
   const observedImageUrls = new Set();
   const observedCanvasEntries = [];
   const drawImageLogs = [];
@@ -62,18 +63,19 @@
 
   function getCanvasSlotIndex(canvas) {
     if (!(canvas instanceof HTMLCanvasElement)) return Number.MAX_SAFE_INTEGER;
-    return Number(canvas.closest('.cz[data-i]')?.getAttribute('data-i') ?? Number.MAX_SAFE_INTEGER);
+    return Number(canvas.closest(SLOT_SELECTOR)?.getAttribute('data-i') ?? Number.MAX_SAFE_INTEGER);
   }
 
   function getReaderRoot() {
-    return document.querySelector('.chapter-comic') ||
+    return document.querySelector('#chapter_boxImages') ||
+      document.querySelector('.chapter-comic') ||
       document.querySelector('.chapter-main') ||
       document.querySelector('#cchapter') ||
       document.body;
   }
 
   function getChapterSlots(root) {
-    return [...root.querySelectorAll('.cz[data-i]')]
+    return [...root.querySelectorAll(SLOT_SELECTOR)]
       .sort((a, b) => Number(a.getAttribute('data-i')) - Number(b.getAttribute('data-i')));
   }
 
@@ -91,8 +93,11 @@
 
   function uniqueCanvasElements(root) {
     const set = new Set();
+    const hasSlots = getChapterSlots(root).length > 0;
     [...root.querySelectorAll('canvas'), ...observedCanvasEntries].forEach((canvas) => {
       if (canvas instanceof HTMLCanvasElement) {
+        if (hasSlots && !root.contains(canvas)) return;
+        if (hasSlots && getCanvasSlotIndex(canvas) === Number.MAX_SAFE_INTEGER) return;
         getCanvasDebugId(canvas);
         set.add(canvas);
       }
@@ -105,8 +110,8 @@
     const errors = [];
     uniqueCanvasElements(root)
       .sort((a, b) => {
-        const ai = Number(a.closest('.cz')?.getAttribute('data-i') ?? Number.MAX_SAFE_INTEGER);
-        const bi = Number(b.closest('.cz')?.getAttribute('data-i') ?? Number.MAX_SAFE_INTEGER);
+        const ai = getCanvasSlotIndex(a);
+        const bi = getCanvasSlotIndex(b);
         return ai - bi;
       })
       .forEach((canvas) => {
@@ -240,7 +245,9 @@
     const root = getReaderRoot();
     const canvasState = collectCanvasExportState(root);
     const slotState = collectSlotImageUrls(root);
-    const imageUrls = slotState.urls.length ? slotState.urls : uniqueUrls([...observedImageUrls]).filter(isLikelyChapterImage);
+    // Reader source images contain shuffled tiles. Only save canvas exports or
+    // replayed draw calls when the page has reader slots.
+    const imageUrls = slotState.slotCount > 0 ? [] : uniqueUrls([...observedImageUrls]).filter(isLikelyChapterImage);
     const renderedUrls = uniqueUrls([
       ...canvasState.urls,
       ...imageUrls
@@ -261,6 +268,7 @@
       bestSource: canvasState.urls.length ? 'canvas' : 'rendered',
       bestCount: renderedUrls.length,
       canvasSample: canvasState.urls.slice(0, 10),
+      canvasUrls: canvasState.urls,
       canvasExportErrors: canvasState.errors.slice(0, 20),
       reconstructionPageCount: buildReconstructionPages().length,
       imageUrlCount: imageUrls.length,

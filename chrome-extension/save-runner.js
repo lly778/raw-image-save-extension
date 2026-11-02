@@ -277,10 +277,11 @@ async function saveBulk(job, dirHandle, signal) {
           await saveBulkItems(items, dirHandle, prefix, 'soraraw', chapter.url, signal);
         }
       } else if (job.site === 'mangaraw') {
-        const capture = await collectMangarawChapterState(chapter.url, signal);
+        const chapterUrl = await getMangarawChapterUrl(chapter, signal);
+        const capture = await collectMangarawChapterState(chapterUrl, signal);
         try {
           const pages = normalizeMangarawPages(capture.state);
-          if (pages.length) {
+          if (pages.length && (!capture.state.slotCount || pages.length >= capture.state.slotCount)) {
             if (job.saveAsZip) {
               await withChapterZip(dirHandle, prefix, (zip) => saveBulkReconstructed(pages, dirHandle, prefix, capture.state.location || chapter.url, signal, zip));
             } else {
@@ -479,7 +480,7 @@ async function collectMangarawChapterState(chapterUrl, signal) {
             const state = response.state;
             const pages = normalizeMangarawPages(state);
             const items = getMangarawImageItems(state);
-            const count = pages.length || items.length;
+            const count = Math.max(pages.length, items.length);
             const target = Number(state.slotCount || 0);
             stableRounds = count > 0 && count === lastCount ? stableRounds + 1 : 0;
             lastCount = count;
@@ -543,8 +544,26 @@ function normalizeMangarawPages(state) {
   return limit > 0 ? pages.slice(0, limit) : pages;
 }
 
+async function getMangarawChapterUrl(chapter, signal) {
+  if (!chapter.requiresReaderToken) return chapter.url;
+  const response = await fetch(new URL('/api/v1/m/t', chapter.url).href, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    signal
+  });
+  if (!response.ok) throw new Error(`chapter token failed with HTTP ${response.status}`);
+  const payload = await response.json();
+  if (typeof payload?.t !== 'string' || !payload.t) throw new Error('Chapter reader token is missing.');
+  const url = new URL(chapter.url);
+  url.searchParams.set('t', payload.t);
+  return url.href;
+}
+
 function getMangarawImageItems(state) {
-  const urls = Array.isArray(state?.imageUrls) ? state.imageUrls : [];
+  const urls = Array.isArray(state?.canvasUrls) && state.canvasUrls.length
+    ? state.canvasUrls
+    : !state?.slotCount && Array.isArray(state?.imageUrls) ? state.imageUrls : [];
   const seen = new Set();
   return urls.filter((url) => {
     const value = String(url || '').trim();
@@ -693,7 +712,7 @@ async function fetchWithHotlinkHeaders(url, pageUrl, signal) {
 }
 
 async function withTemporaryHotlinkRule(pageUrl, fn) {
-  const referer = pageUrl || 'https://mangaraw.ac/';
+  const referer = pageUrl || 'https://mangaraw.ma/';
   const origin = new URL(referer).origin;
   await chrome.declarativeNetRequest.updateDynamicRules({
     removeRuleIds: [HOTLINK_RULE_ID],

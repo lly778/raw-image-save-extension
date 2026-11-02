@@ -6,6 +6,7 @@
   const LABEL_IDLE = 'Save To Folder';
   const LABEL_ALL = 'Download Chapters';
   const LABEL_BUSY = 'Preparing...';
+  const SLOT_SELECTOR = '.cz[data-i], .imageChap[data-i]';
 
   let requestCounter = 0;
   const pending = new Map();
@@ -57,7 +58,7 @@
 
   async function warmUpReader() {
     const previousY = window.scrollY;
-    const slots = [...document.querySelectorAll('.cz[data-i]')]
+    const slots = [...document.querySelectorAll(SLOT_SELECTOR)]
       .sort((a, b) => Number(a.getAttribute('data-i')) - Number(b.getAttribute('data-i')));
     for (const slot of slots) {
       slot.scrollIntoView({ block: 'center' });
@@ -138,13 +139,13 @@
   }
 
   function getCurrentImageItems(state) {
-    if (state?.canvasSample?.length) {
-      return uniqueItems(state.canvasSample.map((url, index) => ({
+    if (state?.canvasUrls?.length) {
+      return uniqueItems(state.canvasUrls.map((url, index) => ({
         url,
         filename: getSafeFilename(state.title, index, url)
       })));
     }
-    if (state?.imageUrls?.length) {
+    if (!state?.slotCount && state?.imageUrls?.length) {
       return uniqueItems(state.imageUrls.map((url, index) => ({
         url,
         filename: getSafeFilename(state.title, index, url)
@@ -263,10 +264,21 @@
   }
 
   async function handleSaveToFolder(button) {
-    const state = await requestState();
+    await warmUpReader();
+    let state;
+    for (let attempt = 0; attempt < 45; attempt += 1) {
+      state = await requestState();
+      const target = Number(state.slotCount || 0);
+      const pageCount = getNormalizedReconstructionPages(state).length;
+      const imageCount = getCurrentImageItems(state).length;
+      if (Math.max(pageCount, imageCount) > 0 && (!target || Math.max(pageCount, imageCount) >= target)) break;
+      if (attempt === 44) throw new Error('Timed out waiting for all chapter pages to render. Refresh the chapter page and retry.');
+      setButtonState(button, `Preparing ${Math.max(pageCount, imageCount)}/${target || '?'}...`, true);
+      await wait(1000);
+    }
     const pages = getNormalizedReconstructionPages(state);
 
-    if (pages.length) {
+    if (pages.length && (!state.slotCount || pages.length >= state.slotCount)) {
       setButtonState(button, `Queueing ${pages.length} pages...`, true);
       const response = await chrome.runtime.sendMessage({
         type: 'start-save-job',
@@ -317,16 +329,20 @@
     const slug = decodeURIComponent(parts[1] || '');
     const seen = new Set();
     const chapters = [];
-    for (const anchor of document.querySelectorAll('a[href]')) {
+    for (const entry of document.querySelectorAll('a[href], #chapterList button[onclick]')) {
+      const navigation = entry.getAttribute('onclick')?.match(/^\s*navigate\(\s*(['"])(.*?)\1\s*\)\s*;?\s*$/);
+      const path = entry.getAttribute('href') || navigation?.[2];
+      if (!path) continue;
       let url;
       try {
-        url = new URL(anchor.href, location.href);
+        url = new URL(path, location.href);
       } catch {
         continue;
       }
       const urlParts = url.pathname.split('/').filter(Boolean);
       const candidateSlug = decodeURIComponent(urlParts[1] || '');
-      if (url.origin !== location.origin || urlParts.length < 3 || urlParts[0] !== 'manga' || candidateSlug !== slug) {
+      const inChapterList = Boolean(entry.closest('#chapterList'));
+      if (url.origin !== location.origin || urlParts.length !== 3 || urlParts[0] !== 'manga' || (!inChapterList && candidateSlug !== slug)) {
         continue;
       }
       url.search = '';
@@ -337,9 +353,10 @@
       }
       seen.add(normalizedUrl);
       const fallback = decodeURIComponent(urlParts[urlParts.length - 1]);
-      const label = (anchor.textContent || fallback).replace(/\s+/g, ' ').trim() || fallback;
+      const label = (entry.textContent || fallback).replace(/\s+/g, ' ').trim() || fallback;
       chapters.push({
         url: normalizedUrl,
+        requiresReaderToken: Boolean(navigation),
         label,
         order: chapters.length + 1
       });
@@ -399,7 +416,7 @@
     button.addEventListener('click', () => {
       if (runningButtons.has(button)) return;
       runningButtons.add(button);
-      Promise.resolve(handleSaveAll(button, chapters)).catch((error) => {
+      Promise.resolve(handleSaveAll(button, collectDirectoryChapters())).catch((error) => {
         console.error('[mangaraw-bulk-save]', error);
         alert(error instanceof Error ? error.message : String(error));
         setButtonState(button, 'Failed, retry', false);
@@ -469,6 +486,8 @@
       startSaveCountPolling();
     } else if (isDirectoryUrl()) {
       createBulkUi();
+      const observer = new MutationObserver(() => createBulkUi());
+      observer.observe(document.body, { childList: true, subtree: true });
     }
   }
 
